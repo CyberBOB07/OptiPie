@@ -1,49 +1,15 @@
-// Background Message handling
-chrome.runtime.onMessage.addListener((message, sender, reply) => {
-  var properties = Object.keys(message)
-  var values = Object.values(message)
-  // Notify type represents chrome notification request
-  if (properties[0] === 'notify') {
-    var notification = values[0]
-    if (notification.type === 'warning') {
-      chrome.notifications.create(`notify-${Date.now()}`, {
-        title: 'OptiPie - Warning',
-        message: notification.content,
-        iconUrl: 'images/warning30.png',
-        type: 'basic'
-      });
-    } else if (notification.type === 'success') {
-      chrome.notifications.create(`notify-${Date.now()}`, {
-        title: 'OptiPie - Success',
-        message: notification.content,
-        iconUrl: 'images/success30.png',
-        type: 'basic'
-      });
-    }
-  }
-});
-
-chrome.runtime.onMessage.addListener(function (request, sender, sendResponse) {
-  if (request.type === "getAuthToken") {
-    chrome.identity.getAuthToken({ interactive: request.isInteractive }, function (token) {
-      sendResponse({ token: token });
-    });
-  }
-  return true
-});
-
-chrome.runtime.onMessage.addListener(function (request, sender, sendResponse) {
-  if (request.type === "clearAllCachedAuthTokens") {
-    chrome.identity.getAuthToken({ interactive: false }, function (token) {
-      chrome.identity.removeCachedAuthToken({ token: token }, function () { });
-      chrome.identity.clearAllCachedAuthTokens();
-    });
-  }
-  return true
-});
-
+// Слушаем сообщения от content script и popup
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message.type === "SleepEventStart") {
+    console.log('Background received message:', message);
+
+    // Пересылаем сообщения между popup и content script
+    if (message.type === "StrategyParametersFound") {
+        chrome.runtime.sendMessage(message);
+    }
+    else if (message.type === "OptimizationComplete") {
+        chrome.runtime.sendMessage(message);
+    }
+    else if (message.type === "SleepEventStart") {
       const delay = message.delay || 3000;
       setTimeout(() => {
           sendResponse({ type: "SleepEventComplete" });
@@ -51,13 +17,22 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       // Return true to indicate that the response will be sent asynchronously
       return true;
   }
+    
+    return true;
 });
 
+// Обработка установки расширения
 chrome.runtime.onInstalled.addListener((details) => {
-  if (details.reason === "update"){
-    chrome.tabs.create({url: "https://optipie.app/news/", active: true});
-  }
-})
+    console.log('Extension installed:', details);
+    if (details.reason === "update"){
+      chrome.tabs.create({url: "https://optipie.app/news/", active: true});
+    }
+});
+
+// Обработка активации расширения
+// chrome.action.onClicked.addListener((tab) => {
+//     console.log('Extension clicked on tab:', tab);
+// });
 
 chrome.runtime.onStartup.addListener(() => {
   chrome.storage.local.set({

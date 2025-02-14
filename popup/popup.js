@@ -1,63 +1,180 @@
 // Popup action event types
-const lockOptimizeButton = 'lockOptimizeButton'
-const unlockOptimizeButton = 'unlockOptimizeButton'
-const getTvParameters = 'getTvParameters'
+const lockOptimizeButton = 'lockOptimizeButton';
+const unlockOptimizeButton = 'unlockOptimizeButton';
+const getTvParameters = 'getTvParameters';
 
 let optimize = document.getElementById("optimize");
 let addParameter = document.getElementById("addParameter");
-let freeParameterLimit = 5
-let plusParameterLimit = 20
+let freeParameterLimit = 5;
+let plusParameterLimit = 20;
 
-
-
-
-function initSelectParameter(options) {
-  $('#selectParameter').multiselect({
-    buttonClass: 'form-select',
-    templates: {
-      button: '<button type="button" class="multiselect dropdown-toggle" data-bs-toggle="dropdown"><span class="multiselect-selected-text"></span></button>',
-    },
-    nonSelectedText: 'Time',
-    maxHeight: "270",
-    buttonText: function (options, select) {
-      if (options.length === 0) {
-        return 'Select Parameters';
-      }
-      else if (options.length > 3) {
-        return '...';
-      }
-      else {
-
-        var labels = [];
-        options.each(function () {
-          if ($(this).attr('label') !== undefined) {
-            labels.push($(this).attr('label'));
-          }
-        });
-        return labels.join(', ') + '';
-
-      }
-    },
-    onChange: async function (option, checked, select) {
-
+// Слушаем ответ со списком параметров
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    console.log('Received message in popup:', message);
+    
+    if (message.type === "StrategyParameters") {
+        console.log('Parameters received:', message.parameters);
+        if (message.parameters) {
+            displayParameters(message.parameters);
+        }
     }
-  });
+    else if (message.type === "OptimizationComplete") {
+        console.log('Optimization complete:', message);
+        const optimizeButton = document.getElementById('optimize');
+        if (optimizeButton) {
+            optimizeButton.disabled = false;
+            optimizeButton.innerHTML = '<i class="bi bi-graph-up-arrow"></i> Optimize';
+        }
+    }
+    else if (message.type === 'popupAction') {
+        var popupAction = message.popupAction
+        switch (popupAction.event) {
+          case lockOptimizeButton:
+            document.querySelector("#optimize").setAttribute("disabled", "")
+            break;
+          case unlockOptimizeButton:
+            document.querySelector("#optimize").removeAttribute("disabled", "")
+            break;
+          case getTvParameters:
+            autoFillParameters(popupAction.message.tvParameters);
+            break;
+        }
+    }
+});
 
-  // Populate the select element
-  const multiselectElement = document.getElementById('selectParameter');
-  options.forEach(option => {
-      const opt = document.createElement('option');
-      opt.value = option.value;
-      opt.textContent = option.content;
-      multiselectElement.appendChild(opt);
-  });
-
-  // Refresh the multiselect to reflect changes
-  $('#selectParameter').multiselect('rebuild');
-
-
-
+// Функция для создания HTML элементов параметра
+function createParameterElement(parameter) {
+    const div = document.createElement('div');
+    div.className = 'parameter-row mb-3';
+    
+    div.innerHTML = `
+        <div class="form-check">
+            <input class="form-check-input parameter-checkbox" type="checkbox" value="${parameter.index}" id="param${parameter.index}">
+            <label class="form-check-label" for="param${parameter.index}">
+                ${parameter.name} (current: ${parameter.value})
+            </label>
+        </div>
+        <div class="input-group input-group-sm mt-2">
+            <input type="number" class="form-control param-start" placeholder="Start" data-index="${parameter.index}">
+            <input type="number" class="form-control param-end" placeholder="End" data-index="${parameter.index}">
+            <input type="number" class="form-control param-step" placeholder="Step" data-index="${parameter.index}">
+        </div>
+    `;
+    
+    return div;
 }
+
+// Функция для отображения параметров в popup
+function displayParameters(parameters) {
+    console.log('Displaying parameters:', parameters);
+    const container = document.getElementById('parameters-container');
+    if (!container) {
+        console.error('Parameters container not found');
+        return;
+    }
+
+    // Очищаем контейнер
+    container.innerHTML = '';
+
+    // Добавляем параметры
+    parameters.forEach(param => {
+        const element = createParameterElement(param);
+        container.appendChild(element);
+    });
+
+    // Показываем кнопку оптимизации
+    const optimizeButton = document.getElementById('optimize');
+    if (optimizeButton) {
+        optimizeButton.style.display = 'block';
+    }
+}
+
+// Функция для сбора выбранных параметров
+function getSelectedParameters() {
+    const parameters = [];
+    const checkboxes = document.querySelectorAll('.parameter-checkbox:checked');
+    
+    checkboxes.forEach(checkbox => {
+        const index = checkbox.value;
+        const row = checkbox.closest('.parameter-row');
+        const start = row.querySelector(`.param-start[data-index="${index}"]`).value;
+        const end = row.querySelector(`.param-end[data-index="${index}"]`).value;
+        const step = row.querySelector(`.param-step[data-index="${index}"]`).value;
+        
+        if (start && end && step) {
+            parameters.push({
+                index: parseInt(index),
+                start: parseFloat(start),
+                end: parseFloat(end),
+                step: parseFloat(step)
+            });
+        }
+    });
+    
+    return parameters;
+}
+
+// Запрашиваем параметры при открытии popup
+async function requestStrategyParameters() {
+    console.log('Requesting strategy parameters...');
+    try {
+        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+        if (!tab) {
+            console.error('No active tab found');
+            return;
+        }
+
+        // Отправляем сообщение в content script
+        console.log('Sending GetStrategyParameters message to tab:', tab.id);
+        chrome.tabs.sendMessage(tab.id, {
+            type: "GetStrategyParameters"
+        });
+    } catch (error) {
+        console.error('Error requesting parameters:', error);
+    }
+}
+
+// Инициализация при загрузке popup
+document.addEventListener('DOMContentLoaded', () => {
+    console.log('Popup loaded, requesting parameters...');
+    requestStrategyParameters();
+
+    // Добавляем обработчик для кнопки оптимизации
+    const optimizeButton = document.getElementById('optimize');
+    if (optimizeButton) {
+        optimizeButton.addEventListener('click', async () => {
+            const selectedParameters = getSelectedParameters();
+            console.log('Selected parameters for optimization:', selectedParameters);
+
+            if (selectedParameters.length === 0) {
+                alert('Please select at least one parameter to optimize');
+                return;
+            }
+
+            try {
+                const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+                if (!tab) {
+                    console.error('No active tab found');
+                    return;
+                }
+
+                // Отправляем параметры в content script для оптимизации
+                console.log('Sending StartOptimization message to tab:', tab.id);
+                chrome.tabs.sendMessage(tab.id, {
+                    type: "StartOptimization",
+                    parameters: selectedParameters
+                });
+
+                // Отключаем кнопку на время оптимизации
+                optimizeButton.disabled = true;
+                optimizeButton.innerHTML = '<i class="bi bi-hourglass-split"></i> Optimizing...';
+            } catch (error) {
+                console.error('Error starting optimization:', error);
+                alert('Error starting optimization. Please try again.');
+            }
+        });
+    }
+});
 
 // Initialize popup html according to last user parameter count state
 chrome.storage.local.get("userParameterCount", ({ userParameterCount }) => {
@@ -298,124 +415,22 @@ async function ProcessPlusFeatures() {
   }
   var userInfo;
   userInfo = await getUserInfo(token)
-  await injectPlusFeatures(userInfo.email)
-}
-
-// inject plus features for eligible users
-async function injectPlusFeatures(userEmail) {
-  var parameterLimit = freeParameterLimit
-  var user = await GetMembershipInfo(userEmail)
+  setTimeout(() => {
+    hideSkeleton("login", "profile")
+  }, 250);
+  document.querySelector("#freeUser #userEmail").innerText = userInfo.email
+  var user = await GetMembershipInfo(userInfo.email)
   if (user.is_membership_active) {
-    chrome.storage.local.set({ "isPlusUser": true });
-    updateUserUI()
-    // show skeletons first for features
-    showSkeleton("timeFrame", "time-frame")
-    showSkeleton("stop", "stop")
-    // change parameter limit up for plus users
-    parameterLimit = plusParameterLimit
-    await getCurrentTab().then(function (tab) {
-      chrome.scripting.executeScript({
-        target: { tabId: tab.id },
-        files: ['plus/get-tv-parameters.js']
-      });
-    })
-    
-    var tvParametersObj = await chrome.storage.local.get("tvParameters")
-    if (tvParametersObj != null){
-      var tvParameters = tvParametersObj.tvParameters
-    for (let i = 0; i < tvParameters.length; i++) {
-      var tvParameter = tvParameters[i]
-      console.log(tvParameter)
-      if (tvParameter.type == "Selectable") {
-        initSelectParameter(tvParameter.options)
-      }
-      }  
-    }
-    
-    let stopOptimization = document.getElementById("stop")
-    stopOptimization.addEventListener("click", async (clickEvent) => {
-      await getCurrentTab().then(function (tab) {
-        chrome.scripting.executeScript({
-          target: { tabId: tab.id },
-          func: stopOptimizationEvent,
-          args: [JSON.stringify(clickEvent)],
-        });
-      })
-      stopOptimization.setAttribute("disabled", "")
-    })
-    setTimeout(() => {
-      hideSkeleton("stop", "stop")
-      stopOptimization.style.display = 'block'
-    }, 300);
-
-
-    $('#selectTimeFrame').multiselect({
-      buttonClass: 'form-select',
-      templates: {
-        button: '<button type="button" class="multiselect dropdown-toggle" data-bs-toggle="dropdown"><span class="multiselect-selected-text"></span></button>',
-      },
-      buttonWidth: '85.75px',
-      nonSelectedText: 'Time',
-      maxHeight: "270",
-      buttonText: function (options, select) {
-        if (options.length === 0) {
-          return 'Time';
-        }
-        else if (options.length > 3) {
-          return '...';
-        }
-        else {
-          var labels = [];
-          options.each(function () {
-            if ($(this).attr('label') !== undefined) {
-              labels.push($(this).attr('label'));
-            }
-            else {
-              var timeFrameTitle = TimeFrameMap.get($(this).html())
-              labels.push(timeFrameTitle);
-            }
-          });
-          return labels.join(', ') + '';
-        }
-      },
-      onChange: async function (option, checked, select) {
-        var timeFrameValue = option[0].value
-        var userTimeFramesObj = await chrome.storage.local.get("userTimeFrames")
-        var userTimeFrames = []
-        if (Object.keys(userTimeFramesObj).length > 0 && userTimeFramesObj.userTimeFrames != null) {
-          userTimeFrames = userTimeFramesObj.userTimeFrames
-        }
-        if (checked) {
-          userTimeFrames.push(timeFrameValue)
-        } else {
-          for (let i = 0; i < userTimeFrames.length; i++) {
-            if (userTimeFrames[i] == timeFrameValue) {
-              userTimeFrames.splice(i, 1)
-            }
-          }
-        }
-        chrome.storage.local.set({ "userTimeFrames": userTimeFrames })
-      }
-    });
-    chrome.storage.local.get("userTimeFrames", ({ userTimeFrames }) => {
-      $('#selectTimeFrame').multiselect('select', userTimeFrames, false);
-    });
-    setTimeout(() => {
-      hideSkeleton("timeFrame", "time-frame")
-      document.getElementById("timeFrame").style.display = 'block'
-    }, 200);
-  } else {
-    chrome.storage.local.set({ "isPlusUser": false });
-  }
-  // Add Parameter Button Event Listener, with 'parameterLimit'
-  addParameter.addEventListener("click", async () => {
-    addParameterBlock(parameterLimit)
-  });
-
-  // dispatch stop optimization event for plus users by clicking stop button
-  function stopOptimizationEvent(clickEvent) {
-    var event = JSON.parse(clickEvent)
-    window.postMessage({ type: "StopOptimizationEvent", detail: { event: event } }, "*");
+    document.getElementById("freeUser").style.display = 'none'
+    document.getElementById("paidUser").style.display = 'flex'
+    document.querySelector("#paidUser #userEmail").innerText = userInfo.email
+    var membershipPeriodEndDate = new Date(user.current_membership_period_end * 1000)
+    var months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    var year = membershipPeriodEndDate.getFullYear();
+    var month = months[membershipPeriodEndDate.getMonth()];
+    var date = membershipPeriodEndDate.getDate();
+    var time = date + ' ' + month + ' ' + year + ' '
+    document.querySelector("#membershipRenewal h6").textContent = time;
   }
 }
 
@@ -870,10 +885,6 @@ function eventPath(evt) {
     return (path.indexOf(window) < 0) ? path.concat(window) : path;
   }
 
-  if (target === window) {
-    return [window];
-  }
-
   function getParents(node, memo) {
     memo = memo || [];
     var parentNode = node.parentNode;
@@ -890,3 +901,5 @@ function eventPath(evt) {
 }
 
 //#endregion
+
+console.log('Popup script loaded');

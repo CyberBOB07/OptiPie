@@ -1,24 +1,55 @@
-// Select all input values
-var tvInputs = document.querySelectorAll("div[data-name='indicator-properties-dialog'] input[inputmode='numeric']")
-var tvInputControls = document.querySelectorAll("div[data-name='indicator-properties-dialog'] div[class*=controlWrapper]")
-var maxProfit = -99999
-// user parameters and time frames
-var userInputs = []
-var userTimeFrames = []
-var optimizationResults = new Map();
+console.log('OptiPie content script loaded');
 
-var sleep = (ms) => new Promise((resolve) => {
-    const handler = (event) => {
-        if (event.data.type === "SleepEventComplete") {
-            window.removeEventListener("message", handler);
-            resolve();
+// Слушаем сообщения от popup
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    console.log('Content script received message:', message);
+    
+    if (message.type === "GetStrategyParameters") {
+        console.log('Getting strategy parameters...');
+        const parameters = GetParametersFromWindow();
+        if (parameters) {
+            chrome.runtime.sendMessage({
+                type: "StrategyParameters",
+                parameters: parameters
+            });
         }
-    };
-    window.addEventListener("message", handler);
-
-    // Notify injector.js about the sleep request with the delay
-    window.postMessage({ type: "SleepEventStart", delay: ms }, "*");
+    }
+    else if (message.type === "StartOptimization") {
+        console.log('Starting optimization with parameters:', message.parameters);
+        StartOptimization(message.parameters);
+    }
+    return true;
 });
+
+// Get Currently active parameters from Tv Strategy Options Window and format them
+function GetParametersFromWindow() {
+    console.log('GetParametersFromWindow called');
+    
+    // Select all input values
+    const tvInputs = document.querySelectorAll("div[data-name='indicator-properties-dialog'] input[inputmode='numeric']");
+    const tvInputControls = document.querySelectorAll("div[data-name='indicator-properties-dialog'] div[class*=controlWrapper]");
+    
+    if (!tvInputs || tvInputs.length === 0) {
+        console.log('No numeric inputs found');
+        return null;
+    }
+
+    // Собираем все параметры
+    const parameters = [];
+    for (let i = 0; i < tvInputs.length; i++) {
+        const input = tvInputs[i];
+        const control = tvInputControls[i];
+        if (input && control) {
+            parameters.push({
+                name: control.textContent.trim(),
+                value: input.value,
+                index: i
+            });
+        }
+    }
+
+    return parameters;
+}
 
 // Run Optimization Process 
 Process()
@@ -403,7 +434,7 @@ function IncrementParameter(tvParameterIndex) {
 }
 
 // Get Currently active parameters from Tv Strategy Options Window and format them
-function GetParametersFromWindow() {
+function GetParametersFromWindow(userInputs) {
     var parameters = "";
     var result = new Object({
         parameters: "",

@@ -1,116 +1,100 @@
-var isInjected = InjectScriptIntoDOM()
+console.log('OptiPie injector loaded');
 
-// Handle Optimization Report coming from script.js
-var reportDataEventCallback = (event) => {
-  var message = event.data
-  if (message.type === "ReportDataEvent") {
-    // Unlock optimize button
-    chrome.runtime.sendMessage({
-      popupAction: {
-        event: "unlockOptimizeButton"
-      }
-    });
-    var reportKey = "report-data-" + message.detail.strategyID
-    if (Object.keys(message.detail.reportData).length > 0) {
-      chrome.storage.local.set({ [reportKey]: message.detail }, function () {
+// Инжектируем script.js в DOM
+function injectScript() {
+    console.log('Injecting script.js...');
+    
+    // Проверяем, открыто ли окно настроек стратегии
+    if (document.querySelectorAll("div[data-name=indicator-properties-dialog]").length < 1) {
+        console.log('Strategy settings window not found');
         chrome.runtime.sendMessage({
-          notify: {
-            type: "success",
-            content: "Optimization Completed Successfully & Added to Reports"
-          }
+            type: "Error",
+            message: "Please open Strategy Settings on TradingView"
         });
-      })
-    } else {
-      chrome.runtime.sendMessage({
-        notify: {
-          type: "warning",
-          content: "Optimization Failed - Try again and follow the steps carefully"
-        }
-      });
+        return false;
     }
-  }
+
+    // Инжектируем основной скрипт
+    var s = document.createElement('script');
+    s.src = chrome.runtime.getURL('script.js');
+    s.onload = function() {
+        console.log('script.js loaded');
+        this.remove();
+    };
+    (document.head || document.documentElement).appendChild(s);
+
+    return true;
 }
 
+// Слушаем сообщения от script.js
 window.addEventListener("message", (event) => {
-  if (event.source !== window || event.data.type !== "SleepEventStart") {
-    return;
-  }
+    // Проверяем источник сообщения
+    if (event.source !== window) return;
 
-  const delay = event.data.delay;
-  // Send SleepEvent to the background script
-  chrome.runtime.sendMessage({ type: "SleepEventStart", delay }, (response) => {
-    if (response.type === "SleepEventComplete") {
-      // Notify script.js that the sleep is complete
-      window.postMessage({ type: "SleepEventComplete" }, "*");
+    console.log('Injector received message:', event.data);
+
+    const message = event.data;
+    
+    // Обрабатываем различные типы сообщений
+    switch (message.type) {
+        case "ParametersFound":
+            console.log('Parameters found:', message.parameters);
+            chrome.runtime.sendMessage({
+                type: "StrategyParametersFound",
+                parameters: message.parameters
+            });
+            break;
+
+        case "OptimizationProgress":
+            console.log('Optimization progress:', message.progress);
+            chrome.runtime.sendMessage({
+                type: "OptimizationProgress",
+                progress: message.progress
+            });
+            break;
+
+        case "OptimizationComplete":
+            console.log('Optimization complete');
+            // Сохраняем отчет
+            if (message.report) {
+                const reportKey = "report-data-" + message.report.strategyId;
+                chrome.storage.local.set({ [reportKey]: message.report }, () => {
+                    chrome.runtime.sendMessage({
+                        type: "OptimizationComplete",
+                        success: true,
+                        message: "Optimization completed successfully"
+                    });
+                });
+            } else {
+                chrome.runtime.sendMessage({
+                    type: "OptimizationComplete",
+                    success: false,
+                    message: "Optimization completed but no report was generated"
+                });
+            }
+            break;
+
+        case "Error":
+            console.error('Error from script:', message.error);
+            chrome.runtime.sendMessage({
+                type: "Error",
+                message: message.error
+            });
+            break;
     }
-  });
 });
 
-// Add ReportData Callback if script.js injected successfully
-if (isInjected) {
-  window.addEventListener("message", reportDataEventCallback, false);
-  // Lock optimize button to prevent accidental multiple submissions
-  chrome.runtime.sendMessage({
-    popupAction: {
-      event: "lockOptimizeButton"
+// Слушаем сообщения от background.js и popup.js
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    console.log('Injector received chrome message:', message);
+
+    // Пересылаем сообщения в script.js
+    if (message.type === "GetStrategyParameters" || 
+        message.type === "StartOptimization" || 
+        message.type === "StopOptimization") {
+        window.postMessage(message, "*");
     }
-  });
-} else {
-  chrome.runtime.sendMessage({
-    notify: {
-      type: "warning",
-      content: "Error Optimization - Open Strategy Settings on Tradingview.com"
-    }
-  });
-}
-
-//Inject script into DOM to get access to React Props
-function InjectScriptIntoDOM() {
-  //Is TradingView Strategy Settings window opened validation
-  if (document.querySelectorAll("div[data-name=indicator-properties-dialog]").length < 1) {
-    return false
-  }
-  var s = document.createElement('script');
-  s.src = chrome.runtime.getURL('script.js');
-  s.onload = function () {
-    this.remove();
-  };
-  (document.head || document.documentElement).appendChild(s);
-
-  // Retrieve the UserInputs from local storage and send them as message to script.js
-  chrome.storage.local.get("userInputs", ({ userInputs }) => {
-    setTimeout(sendUserInputsMessage, 500, userInputs);
-  });
-
-  function sendUserInputsMessage(userInputs) {
-    window.postMessage({ type: "UserInputsEvent", detail: userInputs }, "*");
-  }
-  return true
-}
-
-
-
-
-/* Glossary for variable naming
-  Tv: TradingView
-*/
-
-/*Business Logic
-    Get Input Intervals from user which will be optimized
-    First input will always be incremented, 
-    rest of the inputs will be incremented when first param finishes looping within given intervals
-*/
-
-/*Resources
-  Thanks to @RobW https://stackoverflow.com/questions/9515704/use-a-content-script-to-access-the-page-context-variables-and-functions 
-*/
-
-/* Code block to truncate all local chrome storage
-chrome.storage.local.get(null, function (items) {
-  var allKeys = Object.keys(items);
-  var values = Object.values(items)
-  //chrome.storage.local.remove(allKeys, function () { })
-  //console.log(allKeys);
-  //console.log(values)
 });
-*/
+
+// Инжектируем script.js при загрузке
+injectScript();
